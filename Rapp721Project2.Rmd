@@ -1,0 +1,188 @@
+---
+title: "Air Pollution Data 2018-2020"
+subtitle: "Durham County, North Carolina"
+author: "JT Rapp"
+date: "`r Sys.Date()`"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+#Required Packages
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(RColorBrewer)
+
+#Required Data Sets
+aq_2018 <- read.csv("aq_2018.csv")
+aq_2019 <- read.csv("aq_2019.csv")
+aq_2020 <- read.csv("aq_2020.csv")
+```
+
+
+```{r}
+#Chunk Dedicated to Data Process Function
+#Create Process Function
+process_data <- function(obj) {
+  obj %>%
+    #Rename Column Titles
+    rename(
+      MaxCO = Daily.Max.8.hour.CO.Concentration,
+      MeanPM2.5 = Daily.Mean.PM2.5.Concentration,
+      MaxO3 = Daily.Max.8.hour.Ozone.Concentration) %>%
+    #Reformat Date Column
+    mutate(Date = mdy(Date)) %>%
+    #Calculate Daily Averages
+    group_by(Date) %>%
+    summarize(
+      MaxCO = mean(MaxCO, na.rm = TRUE),
+      MeanPM2.5 = mean(MeanPM2.5, na.rm = TRUE),
+      MaxO3 = mean(MaxO3, na.rm = TRUE)
+    ) %>%
+    #Eliminate Repeat Rows
+    distinct() %>%
+    #Eliminate Improbable Values
+    mutate(across(c(MaxCO, MeanPM2.5, MaxO3), ~ ifelse(. < 0, 0, .)))
+}
+
+#Process Data through Function
+aq_2018 <- process_data(aq_2018)
+aq_2019 <- process_data(aq_2019)
+aq_2020 <- process_data(aq_2020)
+```
+
+
+## Overall CO and O3 Concentration Data
+
+```{r co_o3_plot, fig.width=7.5, fig.height=5.2, fig.align='center'}
+#Chunk dedicated to Creating First Plot
+#Combine into Single Data Set
+aq_data <- bind_rows(
+  aq_2018 %>% mutate(year = 2018),
+  aq_2019 %>% mutate(year = 2019),
+  aq_2020 %>% mutate(year = 2020)
+)
+
+#Summarize Total Data Set by Month. Add Statistical Columns for plotting
+monthly_summary <- aq_data %>%
+  mutate(month = month(Date, label = TRUE)) %>%
+  group_by(month) %>%
+  summarize(
+    CO_mean = mean(MaxCO, na.rm = TRUE),
+    CO_sd   = sd(MaxCO, na.rm = TRUE),
+    CO_n    = sum(!is.na(MaxCO)),
+    O3_mean = mean(MaxO3, na.rm = TRUE),
+    O3_sd   = sd(MaxO3, na.rm = TRUE),
+    O3_n    = sum(!is.na(MaxO3))
+  ) %>%
+  mutate(
+    CO_se = CO_sd / sqrt(CO_n),
+    O3_se = O3_sd / sqrt(O3_n),
+    CO_lower = CO_mean - 1.96 * CO_se,
+    CO_upper = CO_mean + 1.96 * CO_se,
+    O3_lower = O3_mean - 1.96 * O3_se,
+    O3_upper = O3_mean + 1.96 * O3_se
+  )
+
+#Create plot Data Set. Pivot for convienince
+plot1_data <- monthly_summary %>%
+  select(month,
+         CO_mean, CO_lower, CO_upper,
+         O3_mean, O3_lower, O3_upper) %>%
+  pivot_longer(
+    cols = -month,
+    names_to = c("pollutant", ".value"),
+    names_pattern = "(.*)_(.*)"
+  )
+
+#Create GG plot
+ggplot(monthly_summary, aes(x = month)) +
+  geom_point(aes(y = CO_mean, color = "CO"), size = 2.8) +
+  geom_errorbar(aes(ymin = CO_lower, ymax = CO_upper, color = "CO"),
+                width = 0.12) +
+  geom_point(aes(y = O3_mean * 10, color = "O3"), size = 2.8) +
+  geom_errorbar(aes(ymin = O3_lower * 10, ymax = O3_upper * 10, color = "O3"),
+                width = 0.12) +
+  scale_y_continuous(
+    name = "CO Concentration (ppm)",
+    sec.axis = sec_axis(~ . / 10, name = "O3 Concentration (ppm)")
+  ) +
+  scale_color_brewer(palette = "Dark2") +
+  labs(
+    title = "Average Monthly CO and O3 Concentrations (2018–2020)",
+    subtitle = "95% confidence intervals included; O3 scaled for visualization",
+    x = "Month",
+    color = "Pollutant"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title.position = "plot",
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5),
+    legend.position = "top",
+    legend.key.size = unit(0.8, "lines"),
+    plot.margin = margin(10, 10, 10, 10),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank()
+  )
+```
+
+## Yearly PM2.5 Concentration Data
+
+```{r include=FALSE}
+#Chunk Dedicated to Second Plot
+#Create Dataset for Plotting
+pm_data <- bind_rows(
+  aq_2018 %>% mutate(year = 2018),
+  aq_2019 %>% mutate(year = 2019),
+  aq_2020 %>% mutate(year = 2020)
+) %>%
+  mutate(
+    month = month(Date, label = TRUE, abbr = TRUE)
+  ) %>%
+  group_by(year, month) %>%
+  summarize(
+    PM25_mean = mean(MeanPM2.5, na.rm = TRUE),
+    PM25_sd   = sd(MeanPM2.5, na.rm = TRUE),
+    n         = sum(!is.na(MeanPM2.5)),
+    PM25_se   = PM25_sd / sqrt(n)
+  ) %>%
+  ungroup()
+```
+
+```{r pm25_plot, fig.width=7.5, fig.height=5.2, fig.align='center'}
+#Create Plot 2
+ggplot(pm_data, aes(x = month, y = PM25_mean,
+                    color = factor(year),
+                    group = factor(year))) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+  scale_color_brewer(palette = "Dark2") +
+  labs(
+    title = "Monthly Average PM2.5 Concentrations in Durham County",
+    subtitle =
+      "2018–2020 EPA monitoring data; 2020 includes only January–April",
+    x = "Month",
+    y = "PM2.5 (µg/m³)",
+    color = "Year"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title.position = "plot",
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5),
+    axis.title = element_text(size = 14, face = "bold"),
+    legend.position = "top",
+    legend.key.size = unit(0.8, "lines"),
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 11),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    plot.margin = margin(10, 10, 10, 10)
+  )
+```
+
+
+## Github Link
+The link to my github is: https://github.com/jtrapp2020/Project-2.git
